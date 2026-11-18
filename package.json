@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "type": "module",
   "main": "bot.js",
-  "engines": { "node": ">=20" },
+  "engines": { "node": ">=22" },
   "scripts": {
     "start": "node bot.js",
     "dev": "node --env-file=.env bot.js"
