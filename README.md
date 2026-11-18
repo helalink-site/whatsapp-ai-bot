@@ -3,7 +3,7 @@
 Rejects calls after 10s, sends a voice note, then chats with AI. Controlled by you from your owner number.
 
 ## Run locally (test first)
-1. Install Node 20+ and ffmpeg.
+1. Install Node 22+ and ffmpeg.
 2. `npm install`
 3. Copy `.env.example` to `.env` and fill it in.
 4. `npm run dev`

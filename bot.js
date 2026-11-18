@@ -363,7 +363,8 @@ async function start() {
       if (!enabled || call.status !== 'offer' || handled.has(call.id)) continue;
       handled.add(call.id);
 
-      const num = numOf(call.from);
+      const num = numOf(call.callerPn || call.from);
+      console.log('CALL from', call.from, call.callerPn || '', 'enabled=' + enabled);
       const contacts = loadContacts();
       const contact = contacts[num] || {};
       if (ONLY_LISTED && !contacts[num]) continue;
@@ -394,6 +395,8 @@ async function start() {
     for (const m of messages) {
       if (!m.message) continue;
       const jid = m.key.remoteJid;
+      const phoneJid = m.key.remoteJidAlt || jid; // real phone number when jid is a @lid
+      console.log('MSG from', jid, m.key.remoteJidAlt || '', 'fromMe=' + m.key.fromMe);
       if (jid.endsWith('@g.us') || jid === 'status@broadcast') continue;
 
       const body = m.message.conversation || m.message.extendedTextMessage?.text;
@@ -408,14 +411,14 @@ async function start() {
         continue;
       }
       // Messages from your other number(s) are commands, and work even when the bot is OFF
-      if (OWNER_NUMBERS.includes(numOf(jid))) {
+      if ([numOf(phoneJid), numOf(jid)].some((n) => OWNER_NUMBERS.includes(n))) {
         const handler = body.startsWith('/') ? ownerCommand : ownerAI;
         await handler(sock, jid, body).catch((e) => console.error('owner error:', e.message));
         continue;
       }
       if (!enabled) continue;
 
-      const num = numOf(jid);
+      const num = numOf(phoneJid);
       const contacts = loadContacts();
       if (ONLY_LISTED && !contacts[num]) continue;
       const contact = contacts[num] || {};
