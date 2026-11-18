@@ -2,6 +2,7 @@ import makeWASocket, {
   useMultiFileAuthState,
   DisconnectReason,
   fetchLatestBaileysVersion,
+  Browsers,
 } from '@whiskeysockets/baileys';
 import { GoogleGenAI } from '@google/genai';
 import qrcode from 'qrcode-terminal';
@@ -320,25 +321,33 @@ Rules:
 async function start() {
   const { state, saveCreds } = await useMultiFileAuthState(path.join(DATA, 'auth'));
   const { version } = await fetchLatestBaileysVersion();
-  const sock = makeWASocket({ version, auth: state, logger: pino({ level: 'silent' }) });
+  const sock = makeWASocket({
+    version,
+    auth: state,
+    logger: pino({ level: 'silent' }),
+    browser: Browsers.ubuntu('Chrome'), // required for pairing-code linking
+  });
+  let pairingRequested = false;
 
   sock.ev.on('creds.update', saveCreds);
 
-  // Link without a QR: set PAIR_NUMBER=254743810633, then in WhatsApp go to
-  // Linked devices > Link with phone number instead, and type the code shown here.
-  if (!sock.authState.creds.registered && process.env.PAIR_NUMBER) {
-    setTimeout(async () => {
+
+
+  // Link by phone number (no QR): set PAIR_NUMBER=254743810633. The code is requested when
+  // WhatsApp is ready. Use the NEWEST code in the logs, within about a minute, in
+  // WhatsApp > Linked devices > Link a device > Link with phone number instead.
+  sock.ev.on('connection.update', async ({ connection, lastDisconnect, qr }) => {
+    if (qr && process.env.PAIR_NUMBER && !sock.authState.creds.registered && !pairingRequested) {
+      pairingRequested = true;
       try {
         const code = await sock.requestPairingCode(process.env.PAIR_NUMBER.replace(/\D/g, ''));
-        console.log('PAIRING CODE:', code);
+        console.log('=== PAIRING CODE:', code, '===');
       } catch (e) {
         console.error('pairing error:', e.message);
       }
-    }, 3000);
-  }
-
-  sock.ev.on('connection.update', ({ connection, lastDisconnect, qr }) => {
-    if (qr) qrcode.generate(qr, { small: true });
+    } else if (qr && !process.env.PAIR_NUMBER) {
+      qrcode.generate(qr, { small: true });
+    }
     if (connection === 'open') console.log('Connected');
     if (connection === 'close') {
       const code = lastDisconnect?.error?.output?.statusCode;
