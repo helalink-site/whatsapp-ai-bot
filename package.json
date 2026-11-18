@@ -1,0 +1,17 @@
+{
+  "name": "whatsapp-ai-bot",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "bot.js",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "start": "node bot.js",
+    "dev": "node --env-file=.env bot.js"
+  },
+  "dependencies": {
+    "@whiskeysockets/baileys": "latest",
+    "@google/genai": "latest",
+    "qrcode-terminal": "latest",
+    "pino": "latest"
+  }
+}
