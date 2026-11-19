@@ -29,6 +29,7 @@ const OWNER_NUMBERS = (process.env.OWNER_NUMBERS || '').split(',').map((s) => s.
 const ACCENT = process.env.VOICE_ACCENT || 'Kalenjin (Rift Valley, Kenya)';
 // ElevenLabs is used when ELEVENLABS_API_KEY is set. If it fails (no credits, error), Gemini voice is the backup.
 const ELEVEN_VOICE = process.env.ELEVENLABS_VOICE_ID || 'ld6juhMEAFeE1MBpEAhC';
+const ELEVEN_SPEED = Number(process.env.ELEVENLABS_SPEED || 0.85); // 0.7 = slower, 1.0 = normal, 1.2 = faster
 const ELEVEN_MODEL = process.env.ELEVENLABS_MODEL || 'eleven_multilingual_v2'; // check ElevenLabs docs for the newest model that supports Swahili
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
@@ -41,6 +42,13 @@ const DEFAULT_FIRST = [
   `Niaje, ${OWNER} yuko offline saa hii. Acha ujumbe hapa, atakujibu.`,
   `Hi hi, ${OWNER} hayuko poa. Nikusaidie na nini?`,
   `Sasa, ${OWNER} amepumzika saa hii. Unaweza niambia, nitamwambia asubuhi.`,
+];
+
+// Used when you set /online: you are around but can't talk right now
+const DEFAULT_ONLINE = [
+  `Hey! ${OWNER} yuko online lakini hawezi kuongea sasa hivi. Mtumie ujumbe, atakujibu hivi karibuni.`,
+  `Niaje, ${OWNER} ameona umepiga, ako busy kidogo. Andika hapa, atakujibu.`,
+  `Heyy, ${OWNER} yuko around lakini hawezi pick simu saa hii. Niambie unataka nini.`,
 ];
 
 // ---------- helpers ----------
@@ -62,14 +70,27 @@ let enabled = (() => {
     return false;
   }
 })();
+let ownerStatus = (() => {
+  try {
+    return JSON.parse(fs.readFileSync(path.join(DATA, 'state.json'), 'utf8')).status === 'online' ? 'online' : 'offline';
+  } catch {
+    return 'offline';
+  }
+})();
+const saveState = () => fs.writeFileSync(path.join(DATA, 'state.json'), JSON.stringify({ enabled, status: ownerStatus }));
 const setEnabled = (v) => {
   enabled = v;
-  fs.writeFileSync(path.join(DATA, 'state.json'), JSON.stringify({ enabled }));
+  saveState();
+};
+const setStatus = (v) => {
+  ownerStatus = v === 'online' ? 'online' : 'offline';
+  saveState();
 };
 const saveContacts = (c) => fs.writeFileSync(path.join(DATA, 'contacts.json'), JSON.stringify(c, null, 2));
 
 const HELP = `Commands (send these to yourself in WhatsApp):
 /on  or  /off
+/online  or  /offline  (tell the bot if you are available)
 /status
 /list
 /train 254712345678 notes about this person
@@ -91,8 +112,14 @@ async function ownerCommand(sock, jid, text) {
     case '/off':
       setEnabled(false);
       return say('Bot is OFF');
+    case '/online':
+      setStatus('online');
+      return say('Status: you are ONLINE. Callers will be told you are around but busy.');
+    case '/offline':
+      setStatus('offline');
+      return say('Status: you are OFFLINE. Callers will be told you are away.');
     case '/status':
-      return say(`Bot is ${enabled ? 'ON' : 'OFF'}. ${Object.keys(contacts).length} numbers trained.`);
+      return say(`Bot is ${enabled ? 'ON' : 'OFF'}. You are ${ownerStatus}. ${Object.keys(contacts).length} numbers trained.`);
     case '/list':
       return say(
         Object.entries(contacts)
@@ -129,7 +156,7 @@ const replyCount = new Map(); // number -> replies sent (for voice/text alternat
 const history = new Map(); // number -> chat history for Gemini
 
 function pickFirst(num, contact) {
-  const pool = contact.firstMessages?.length ? contact.firstMessages : DEFAULT_FIRST;
+  const pool = contact.firstMessages?.length ? contact.firstMessages : ownerStatus === 'online' ? DEFAULT_ONLINE : DEFAULT_FIRST;
   let i;
   do {
     i = Math.floor(Math.random() * pool.length);
@@ -172,7 +199,11 @@ async function elevenVoice(text) {
     {
       method: 'POST',
       headers: { 'xi-api-key': process.env.ELEVENLABS_API_KEY, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text, model_id: ELEVEN_MODEL }),
+      body: JSON.stringify({
+        text,
+        model_id: ELEVEN_MODEL,
+        voice_settings: { stability: 0.5, similarity_boost: 0.75, speed: ELEVEN_SPEED },
+      }),
     }
   );
   if (!res.ok) throw new Error('ElevenLabs HTTP ' + res.status);
@@ -213,6 +244,8 @@ About this person (written by ${OWNER}): ${contact.notes || 'no notes, be polite
 ${OWNER}'s current instructions for this person: ${(contact.instructions || []).map((i) => i.text).join(' | ') || 'none'}.
 Rules:
 - Short, casual, natural replies. Match their language (English, Swahili or Sheng).
+- Read the person's mood (angry, sad, worried, excited) and answer in a fitting tone: calm and respectful if upset, warm if sad, light if happy.
+- ${OWNER} is currently ${ownerStatus}. Say so honestly if it matters: if online, he is around but cannot talk now; if offline, he is away.
 - You are an assistant, not ${OWNER}. If they sincerely ask whether you are a bot or a human, say you are ${OWNER}'s AI assistant.
 - Never invent facts, plans or promises for ${OWNER}. If unsure, say you will pass the message on.
 - Do not flirt, play a romantic partner, or try to manipulate anyone's feelings (no making people jealous).`;
@@ -231,7 +264,7 @@ Rules:
 // Builds the first voice note after a rejected call.
 // If you gave instructions for this number, Gemini turns them into a short spoken message.
 // "once" instructions are used up after the next call; "always" ones are used on every call.
-async function callScript(num) {
+async function callScript(num, kind = 'rejected_by_bot') {
   const contacts = loadContacts();
   const contact = contacts[num] || {};
   const active = (contact.instructions || []).filter((i) => i.repeat === 'always' || !i.used);
@@ -244,6 +277,7 @@ async function callScript(num) {
       parts: [{ text: `Write a short WhatsApp voice note (max 2 spoken sentences, casual, mix of Swahili, Sheng and English as fits) from ${OWNER}'s AI assistant to someone who just called and was rejected.
 About them: ${contact.notes || 'no notes'}
 ${OWNER}'s instructions for what to say: ${active.map((i) => i.text).join(' | ')}
+Context: ${OWNER} is currently ${ownerStatus}. What happened to the call: ${kind.replace(/_/g, ' ')}. If ${OWNER} is online, say politely he is around but cannot talk and will reply by message; if offline, say he is away.
 Do not claim to be human or ${OWNER}. Output only the words to be spoken.` }],
     }],
   });
@@ -251,6 +285,21 @@ Do not claim to be human or ${OWNER}. Output only the words to be spoken.` }],
   (contact.instructions || []).forEach((i) => { if (i.repeat === 'once') i.used = true; });
   contacts[num] = contact;
   saveContacts(contacts);
+  return r.text.trim();
+}
+
+// Owner pastes a message someone sent him; bot reads the mood and drafts replies HE sends himself.
+async function helpReply(message, about) {
+  const r = await ai.models.generateContent({
+    model: CHAT_MODEL,
+    contents: [{
+      role: 'user',
+      parts: [{ text: `${OWNER} received this WhatsApp message${about ? ' from ' + about : ''}:
+"${message}"
+
+Give, briefly: 1) the mood you read in it (one line), 2) what they probably need, 3) three short reply options in ${OWNER}'s casual voice (English, Swahili or Sheng as fits): warm, calm and honest. ${OWNER} will pick one and send it himself.` }],
+    }],
+  });
   return r.text.trim();
 }
 
@@ -272,6 +321,8 @@ Action types:
 {"type":"train","number":"digits","name":"optional","notes":"how to treat or talk to this person"}
 {"type":"clear_instructions","number":"digits"}
 {"type":"on"} {"type":"off"} {"type":"list"}
+{"type":"status","value":"online"|"offline"}  (the owner says whether he is available)
+{"type":"help_reply","message":"the text the other person sent","about":"optional who sent it"}  (the owner pastes a message and asks how to reply)
 
 Rules:
 - Map names to numbers using the contacts list. Numbers are digits with country code, no plus.
@@ -300,6 +351,8 @@ Rules:
     const n = a.number?.replace(/\D/g, '');
     if (a.type === 'on') setEnabled(true);
     else if (a.type === 'off') setEnabled(false);
+    else if (a.type === 'status') setStatus(a.value);
+    else if (a.type === 'help_reply' && a.message) extra += '\n\n' + (await helpReply(a.message, a.about));
     else if (a.type === 'list') {
       extra += '\n' + (Object.entries(c).map(([k, v]) => `${k} ${v.name || ''}: ${(v.notes || '').slice(0, 50)}`).join('\n') || 'No numbers yet.');
     } else if (n && a.type === 'instruct' && a.text) {
@@ -358,8 +411,10 @@ async function start() {
 
   // Incoming call: ring 10s -> reject -> wait 10s -> voice note
   const handled = new Set();
+  const callState = new Map(); // call id -> latest status (offer, accept, reject, timeout...)
   sock.ev.on('call', async (calls) => {
     for (const call of calls) {
+      callState.set(call.id, call.status);
       if (!enabled || call.status !== 'offer' || handled.has(call.id)) continue;
       handled.add(call.id);
 
@@ -371,10 +426,16 @@ async function start() {
 
       try {
         await sleep(RING_MS);
-        await sock.rejectCall(call.id, call.from);
+        const st = callState.get(call.id);
+        console.log('CALL status after ring:', st);
+        if (st === 'accept') continue; // you answered: do nothing
+        let kind = 'rejected_by_bot';
+        if (st === 'reject') kind = 'declined_by_owner'; // you declined it yourself
+        else if (st === 'timeout' || st === 'terminate') kind = 'missed'; // rang out or caller hung up
+        else await sock.rejectCall(call.id, call.from); // still ringing: the bot rejects it
         await sleep(VOICE_DELAY_MS);
 
-        const text = await callScript(num);
+        const text = await callScript(num, kind);
         await sock.sendPresenceUpdate('recording', call.from);
         const audio = await textToVoice(text);
         await sock.sendMessage(call.from, { audio, mimetype: 'audio/ogg; codecs=opus', ptt: true });
