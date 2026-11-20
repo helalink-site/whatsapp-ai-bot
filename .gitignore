@@ -4,3 +4,7 @@ data/
 .env
 state.json
 contacts.json
+voices.json
+projects.json
+projects/
+waiting.json

@@ -1,14 +1,11 @@
 {
   "254712345678": {
-    "name": "Example Contact",
-    "notes": "Friend from campus. Uses Sheng. Casual and friendly. Don't share where I am.",
-    "mode": "alternate",
-    "firstMessages": [
-      "Hey niaje! Xavi hayuko, nitamwambia umepiga.",
-      "Sasa, Xavi ameacha simu. Niambie unataka nini.",
-      "Heyy, Xavi yuko offline. Acha ujumbe, atakujibu.",
-      "Niaje, hayuko saa hii. Nikusaidie na nini?",
-      "Hi, Xavi amepumzika. Nitamwambia asubuhi."
-    ]
+    "name": "Example Customer",
+    "notes": "Owns a salon, wants a booking website. Prefers Swahili.",
+    "mode": "text"
+  },
+  "254722222222": {
+    "name": "Example Friend",
+    "personal": true
   }
 }
